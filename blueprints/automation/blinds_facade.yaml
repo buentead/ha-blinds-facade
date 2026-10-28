@@ -1,0 +1,495 @@
+blueprint:
+  name: Blinds Facade (KNX scenes)
+  author: Adrian Bünter
+  description: >-
+    Controls the blinds of **one facade of one room** (e.g. office south).
+    On every relevant event the target state is recomputed; the blinds only
+    move when it differs from the last state that was set.
+
+
+    **Priorities (first match wins):**
+
+    1. Area disabled → do nothing
+
+    2. Manual override (timer running) → do nothing
+
+    3. Night → closed
+
+    4. Hot day (forecast hot + sunny, indoor ≥ threshold) → shading
+
+    5. Shading (bright, sun within azimuth window, indoor > target) → shading
+
+    6. Otherwise → open
+
+
+    Shading = scene 1 below the elevation split, scene 2 at or above it.
+    Every decision is written to the logbook of the state helper, including the reason.
+
+
+    Required per instance: an `input_select` (options exactly: open, closed, scene1, scene2),
+    an `input_datetime` (date + time) and a `timer` (restore: true).
+  domain: automation
+  input:
+    blinds:
+      name: Blinds and helpers
+      icon: mdi:blinds
+      input:
+        covers:
+          name: Blinds
+          description: All blinds of this facade of this room.
+          selector:
+            entity:
+              domain: cover
+              multiple: true
+        scene_1:
+          name: Scene 1 (low sun)
+          description: One scene per blind, e.g. scene.j_e3_01_scene1
+          selector:
+            entity:
+              domain: scene
+              multiple: true
+        scene_2:
+          name: Scene 2 (high sun)
+          selector:
+            entity:
+              domain: scene
+              multiple: true
+        enable_entity:
+          name: Area enable
+          description: The automation only acts while this entity is "on".
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+                - binary_sensor
+        state_helper:
+          name: State helper (input_select)
+          description: Options exactly open, closed, scene1, scene2
+          selector:
+            entity:
+              domain: input_select
+        last_cmd_helper:
+          name: Last command helper (input_datetime with date and time)
+          selector:
+            entity:
+              domain: input_datetime
+        manual_timer:
+          name: Manual override timer
+          description: Timer with "restore state on restart" enabled.
+          selector:
+            entity:
+              domain: timer
+
+    sensors:
+      name: Sensors
+      icon: mdi:thermometer
+      input:
+        indoor_temp:
+          name: Room temperature
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
+        outdoor_temp:
+          name: Outdoor temperature
+          selector:
+            entity:
+              domain: sensor
+              device_class: temperature
+        lux_sensor:
+          name: Illuminance (weather station)
+          selector:
+            entity:
+              domain: sensor
+              device_class: illuminance
+        bright_sensor:
+          name: Sun bright (template binary sensor with hysteresis)
+          description: ">= 55k lx for 10 min → on, < 40k lx for 30 min → off"
+          selector:
+            entity:
+              domain: binary_sensor
+        weather_entity:
+          name: Weather (e.g. MeteoSwiss)
+          description: Must provide a daily forecast via weather.get_forecasts.
+          selector:
+            entity:
+              domain: weather
+        good_conditions:
+          name: Weather conditions that count as good weather
+          default:
+            - sunny
+            - partlycloudy
+            - clear-night
+          selector:
+            select:
+              multiple: true
+              custom_value: true
+              options:
+                - sunny
+                - partlycloudy
+                - clear-night
+                - cloudy
+                - fog
+                - rainy
+                - pouring
+                - snowy
+                - snowy-rainy
+                - lightning
+                - lightning-rainy
+                - hail
+                - windy
+                - windy-variant
+                - exceptional
+
+    facade:
+      name: Facade and shading
+      icon: mdi:weather-sunny
+      input:
+        azimuth_min:
+          name: Azimuth from
+          description: The sun hits the facade from this azimuth on (east ≈ 45, south ≈ 100, west ≈ 190).
+          default: 100
+          selector:
+            number: {min: 0, max: 360, step: 1, unit_of_measurement: "°", mode: box}
+        azimuth_max:
+          name: Azimuth to
+          description: If "to" is smaller than "from", the window wraps through north (360 → 0).
+          default: 260
+          selector:
+            number: {min: 0, max: 360, step: 1, unit_of_measurement: "°", mode: box}
+        elevation_split:
+          name: Scene split by sun elevation
+          description: Scene 1 below this value, scene 2 at or above it.
+          default: 40
+          selector:
+            number: {min: 0, max: 90, step: 1, unit_of_measurement: "°", mode: box}
+        target_normal:
+          name: Target temperature (normal)
+          default: 21.5
+          selector:
+            number: {min: 15, max: 30, step: 0.5, unit_of_measurement: "°C", mode: box}
+        target_warm:
+          name: Target temperature when cold and tomorrow's forecast is bad
+          default: 23
+          selector:
+            number: {min: 15, max: 30, step: 0.5, unit_of_measurement: "°C", mode: box}
+        outdoor_cold:
+          name: Outdoor counts as cold below
+          default: 15
+          selector:
+            number: {min: -10, max: 30, step: 0.5, unit_of_measurement: "°C", mode: box}
+        hysteresis:
+          name: Hysteresis
+          description: Shading only ends once indoor < target − hysteresis.
+          default: 1
+          selector:
+            number: {min: 0, max: 5, step: 0.1, unit_of_measurement: "°C", mode: box}
+        hot_day_max:
+          name: Hot day from forecast maximum
+          default: 25
+          selector:
+            number: {min: 15, max: 40, step: 0.5, unit_of_measurement: "°C", mode: box}
+        hot_day_indoor:
+          name: Hot-day shading from room temperature
+          default: 20
+          selector:
+            number: {min: 15, max: 30, step: 0.5, unit_of_measurement: "°C", mode: box}
+        hot_day_until_noon:
+          name: Hot-day rule only until solar noon
+          description: Off = hot-day shading applies all day.
+          default: false
+          selector:
+            boolean: {}
+
+    timing:
+      name: Opening, closing, manual override
+      icon: mdi:clock-outline
+      input:
+        open_time:
+          name: Open no earlier than
+          default: "06:30:00"
+          selector:
+            time: {}
+        open_lux:
+          name: Open from illuminance
+          default: 1000
+          selector:
+            number: {min: 0, max: 20000, step: 50, unit_of_measurement: lx, mode: box}
+        close_lux:
+          name: Close below illuminance (after solar noon)
+          default: 300
+          selector:
+            number: {min: 0, max: 20000, step: 50, unit_of_measurement: lx, mode: box}
+        twilight_elevation:
+          name: Twilight (sun elevation)
+          description: −6° = civil twilight
+          default: -6
+          selector:
+            number: {min: -18, max: 5, step: 0.5, unit_of_measurement: "°", mode: box}
+        manual_minutes:
+          name: Manual override duration
+          default: 60
+          selector:
+            number: {min: 1, max: 720, step: 1, unit_of_measurement: min, mode: box}
+        settle_seconds:
+          name: Travel time window
+          description: >-
+            Position changes up to this long after an own command are not treated as
+            manual operation. Set slightly longer than the longest run including slats.
+          default: 120
+          selector:
+            number: {min: 10, max: 600, step: 5, unit_of_measurement: s, mode: box}
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: time_pattern
+    minutes: "/5"
+    id: eval
+  - trigger: homeassistant
+    event: start
+    id: eval
+  - trigger: time
+    at: !input open_time
+    id: eval
+  - trigger: state
+    entity_id: !input bright_sensor
+    id: eval
+  - trigger: state
+    entity_id: !input indoor_temp
+    id: eval
+  - trigger: numeric_state
+    entity_id: !input lux_sensor
+    above: !input open_lux
+    id: eval
+  - trigger: numeric_state
+    entity_id: !input lux_sensor
+    below: !input close_lux
+    id: eval
+  - trigger: state
+    entity_id: !input enable_entity
+    to: "on"
+    id: force
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input manual_timer
+    id: force
+  - trigger: state
+    entity_id: !input covers
+    attribute: current_position
+    id: manual
+  - trigger: state
+    entity_id: !input covers
+    attribute: current_tilt_position
+    id: manual
+
+variables:
+  covers: !input covers
+  scene_1: !input scene_1
+  scene_2: !input scene_2
+  enable_entity: !input enable_entity
+  state_helper: !input state_helper
+  last_cmd_helper: !input last_cmd_helper
+  manual_timer: !input manual_timer
+  indoor_temp: !input indoor_temp
+  outdoor_temp: !input outdoor_temp
+  lux_sensor: !input lux_sensor
+  bright_sensor: !input bright_sensor
+  weather_entity: !input weather_entity
+  good_conditions: !input good_conditions
+  azimuth_min: !input azimuth_min
+  azimuth_max: !input azimuth_max
+  elevation_split: !input elevation_split
+  target_normal: !input target_normal
+  target_warm: !input target_warm
+  outdoor_cold: !input outdoor_cold
+  hysteresis: !input hysteresis
+  hot_day_max: !input hot_day_max
+  hot_day_indoor: !input hot_day_indoor
+  hot_day_until_noon: !input hot_day_until_noon
+  open_time: !input open_time
+  open_lux: !input open_lux
+  close_lux: !input close_lux
+  twilight_elevation: !input twilight_elevation
+  manual_minutes: !input manual_minutes
+  settle_seconds: !input settle_seconds
+  last_cmd_ts: "{{ state_attr(last_cmd_helper, 'timestamp') | float(0) }}"
+
+actions:
+  - choose:
+      # ---------------------------------------------------------------
+      # Detect manual operation: a position change outside the travel
+      # time window after the last own command.
+      # ---------------------------------------------------------------
+      - conditions:
+          - condition: trigger
+            id: manual
+        sequence:
+          - condition: template
+            value_template: >-
+              {{ trigger.from_state is not none and trigger.to_state is not none
+                 and trigger.from_state.state not in ['unavailable', 'unknown']
+                 and trigger.to_state.state not in ['unavailable', 'unknown']
+                 and trigger.from_state.attributes.get(trigger.attribute) is not none
+                 and (as_timestamp(now()) - last_cmd_ts) > settle_seconds | float(120) }}
+          - action: timer.start
+            target:
+              entity_id: !input manual_timer
+            data:
+              duration: >-
+                {% set m = manual_minutes | int(60) %}
+                {{ '%02d:%02d:00' % (m // 60, m % 60) }}
+          - action: logbook.log
+            data:
+              name: Blinds
+              entity_id: !input state_helper
+              message: >-
+                Manual operation detected on {{ state_attr(trigger.entity_id, 'friendly_name') or trigger.entity_id }}
+                – automation paused for {{ manual_minutes | int(60) }} min.
+
+    # -----------------------------------------------------------------
+    # Compute the target state and move if required
+    # -----------------------------------------------------------------
+    default:
+      - condition: template
+        value_template: "{{ is_state(enable_entity, 'on') }}"
+      - condition: template
+        value_template: "{{ not is_state(manual_timer, 'active') }}"
+      - condition: template
+        value_template: "{{ has_value(indoor_temp) }}"
+
+      - action: weather.get_forecasts
+        target:
+          entity_id: !input weather_entity
+        data:
+          type: daily
+        response_variable: fc
+        continue_on_error: true
+
+      - variables:
+          fc_list: >-
+            {% if fc is defined and fc and weather_entity in fc %}
+              {{ fc[weather_entity].forecast | default([]) }}
+            {% else %}
+              {{ [] }}
+            {% endif %}
+          fc_days: >-
+            {% set today = now().date() %}
+            {% set ns = namespace(t=none, m=none) %}
+            {% for f in fc_list %}
+              {% set dt = as_datetime(f.datetime) %}
+              {% set d = (as_local(dt) if dt is not none else none) %}
+              {% if d is not none and d.date() == today and ns.t is none %}{% set ns.t = f %}{% endif %}
+              {% if d is not none and d.date() == today + timedelta(days=1) and ns.m is none %}{% set ns.m = f %}{% endif %}
+            {% endfor %}
+            {% set t = ns.t if ns.t is not none else (fc_list[0] if fc_list | count > 0 else {}) %}
+            {% set m = ns.m if ns.m is not none else (fc_list[1] if fc_list | count > 1 else {}) %}
+            {{ {'today_max': t.get('temperature'), 'today_cond': t.get('condition'),
+                'tomorrow_cond': m.get('condition')} }}
+
+      - variables:
+          elev: "{{ state_attr('sun.sun', 'elevation') | float(0) }}"
+          azi: "{{ state_attr('sun.sun', 'azimuth') | float(0) }}"
+          before_noon: "{{ state_attr('sun.sun', 'rising') | bool(now().hour < 13) }}"
+          lux: "{{ states(lux_sensor) | float(-1) }}"
+          t_in: "{{ states(indoor_temp) | float(0) }}"
+          t_out: "{{ states(outdoor_temp) | float(99) }}"
+          current: "{{ states(state_helper) }}"
+          shading_now: "{{ current in ['scene1', 'scene2'] }}"
+          bright: "{{ is_state(bright_sensor, 'on') }}"
+          in_window: >-
+            {%- set a = azimuth_min | float(0) -%}
+            {%- set b = azimuth_max | float(360) -%}
+            {%- if a <= b -%}{{ a <= azi <= b }}{%- else -%}{{ azi >= a or azi <= b }}{%- endif -%}
+          tomorrow_bad: >-
+            {{ fc_days.tomorrow_cond is not none
+               and fc_days.tomorrow_cond not in good_conditions }}
+          target: >-
+            {{ (target_warm if (t_out < outdoor_cold | float and tomorrow_bad)
+                else target_normal) | float }}
+          morning_ok: >-
+            {{ now() >= today_at(open_time)
+               and (elev >= twilight_elevation | float
+                    or lux >= open_lux | float) }}
+          evening_close: >-
+            {{ elev < twilight_elevation | float
+               or (lux >= 0 and lux < close_lux | float) }}
+          closed_this_evening: >-
+            {{ current == 'closed' and last_cmd_ts >= as_timestamp(today_at('12:00')) }}
+          night: >-
+            {{ (before_noon and not morning_ok)
+               or (not before_noon and (evening_close or closed_this_evening)) }}
+          hot_day: >-
+            {{ fc_days.today_max is not none
+               and fc_days.today_max | float(0) > hot_day_max | float
+               and fc_days.today_cond in good_conditions
+               and (before_noon or not hot_day_until_noon) }}
+          hot_shade: >-
+            {{ hot_day and (t_in >= hot_day_indoor | float
+                            or (shading_now and t_in >= hot_day_indoor | float - hysteresis | float)) }}
+          sun_shade: >-
+            {{ bright and in_window and elev > 0
+               and (t_in > target
+                    or (shading_now and t_in >= target - hysteresis | float)) }}
+          desired: >-
+            {%- if night -%}closed
+            {%- elif hot_shade or sun_shade -%}{{ 'scene1' if elev < elevation_split | float else 'scene2' }}
+            {%- else -%}open{%- endif -%}
+          reason: >-
+            {% if night %}
+              {{ 'Night (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx)' }}
+            {% elif hot_shade %}
+              {{ 'Hot day (forecast ' ~ fc_days.today_max ~ ' °C, ' ~ fc_days.today_cond ~ ', indoor ' ~ t_in ~ ' °C)' }}
+            {% elif sun_shade %}
+              {{ 'Shading (indoor ' ~ t_in ~ ' °C, target ' ~ target ~ ' °C, sun ' ~ elev | round(1) ~ '°/' ~ azi | round(0) ~ '°)' }}
+            {% else %}
+              {{ 'Day (indoor ' ~ t_in ~ ' °C, target ' ~ target ~ ' °C, bright=' ~ bright ~ ', in window=' ~ in_window ~ ')' }}
+            {% endif %}
+
+      - condition: template
+        value_template: "{{ desired != current or trigger.id == 'force' }}"
+
+      # Stamp the time first so the KNX feedback of our own movement
+      # is not detected as manual operation.
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: !input last_cmd_helper
+        data:
+          timestamp: "{{ as_timestamp(now()) }}"
+      - action: input_select.select_option
+        target:
+          entity_id: !input state_helper
+        data:
+          option: "{{ desired }}"
+
+      - choose:
+          - conditions: "{{ desired == 'open' }}"
+            sequence:
+              - action: cover.open_cover
+                target:
+                  entity_id: "{{ covers }}"
+          - conditions: "{{ desired == 'closed' }}"
+            sequence:
+              - action: cover.close_cover
+                target:
+                  entity_id: "{{ covers }}"
+          - conditions: "{{ desired == 'scene1' }}"
+            sequence:
+              - action: scene.turn_on
+                target:
+                  entity_id: "{{ scene_1 }}"
+          - conditions: "{{ desired == 'scene2' }}"
+            sequence:
+              - action: scene.turn_on
+                target:
+                  entity_id: "{{ scene_2 }}"
+
+      - action: logbook.log
+        data:
+          name: Blinds
+          entity_id: !input state_helper
+          message: "{{ current }} → {{ desired }}: {{ reason }}"

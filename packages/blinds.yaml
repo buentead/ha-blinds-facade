@@ -1,0 +1,58 @@
+# Home Assistant package for the "Blinds Facade (KNX scenes)" blueprint.
+#
+# Location: /config/packages/blinds.yaml
+# Enable packages in configuration.yaml (if not done yet):
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# The per-instance helpers can also be created in the UI
+# (Settings → Devices & services → Helpers). What matters are the
+# input_select options and "restore" on the timer.
+
+template:
+  - binary_sensor:
+      # Needed once (one weather station for all instances).
+      # on : >= 55,000 lx continuously for 10 minutes
+      # off: <  40,000 lx continuously for 30 minutes
+      # In between the last state is kept (hysteresis via this.state).
+      - name: "Blinds sun bright"
+        unique_id: blinds_sun_bright
+        icon: mdi:weather-sunny-alert
+        # >>> Replace with the illuminance entity of your weather station <<<
+        state: >-
+          {% set lux = states('sensor.weather_station_illuminance') | float(0) %}
+          {{ lux >= 55000 or (this.state == 'on' and lux >= 40000) }}
+        delay_on: "00:10:00"
+        delay_off: "00:30:00"
+
+# ---------------------------------------------------------------------
+# Example: helpers for ONE instance (room j_e3_01, south facade).
+# Copy and rename for every further room facade.
+# ---------------------------------------------------------------------
+input_select:
+  blinds_j_e3_01_south_state:
+    name: "Blinds J E3.01 South – State"
+    options:
+      - open
+      - closed
+      - scene1
+      - scene2
+    icon: mdi:blinds
+
+input_datetime:
+  blinds_j_e3_01_south_last_command:
+    name: "Blinds J E3.01 South – Last command"
+    has_date: true
+    has_time: true
+
+timer:
+  blinds_j_e3_01_south_manual:
+    name: "Blinds J E3.01 South – Manual override"
+    duration: "01:00:00"
+    restore: true
+
+# Enable switch per area (if you don't have one yet)
+input_boolean:
+  blinds_enable_example_area:
+    name: "Blinds enable – Example area"
+    icon: mdi:blinds-open
