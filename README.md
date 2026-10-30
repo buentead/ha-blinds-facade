@@ -21,14 +21,15 @@ Priorities – the first matching rule wins:
 |---|------|--------|
 | 1 | Area enable is off | nothing |
 | 2 | Manual override timer is running | nothing |
-| 3 | Night | `closed` |
+| 3 | Night | `closed` if *Enable nightly closing* is on, otherwise nothing |
 | 4 | Hot day: today's forecast > 25 °C and good weather, room ≥ 20 °C | shading |
 | 5 | Sun bright, sun within the facade's azimuth window, room > target | shading |
 | 6 | Otherwise | `open` |
 
 **Shading** uses scene 1 while the sun elevation is below 40° and scene 2 from 40° on.
 
-**Night**
+**Night** (closing only if *Enable nightly closing* is on – default. When it is off,
+the automation does nothing at night and leaves the blinds where they are.)
 - Before solar noon it stays night until it is at least 06:30 **and** either civil
   dawn (sun elevation ≥ −6°) or ≥ 1000 lx is reached.
 - After solar noon it becomes night at civil dusk (< −6°) or below 300 lx. Once the
