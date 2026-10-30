@@ -10,7 +10,7 @@ blueprint:
 
     1. Area disabled → do nothing
     2. Manual override (timer running) → do nothing
-    3. Night → closed
+    3. Night → closed (only if nightly closing is enabled, otherwise do nothing)
     4. Hot day (forecast hot + sunny, indoor ≥ threshold) → shading
     5. Shading (bright, sun within azimuth window, indoor > target) → shading
     6. Otherwise → open
@@ -198,6 +198,14 @@ blueprint:
       name: Opening, closing, manual override
       icon: mdi:clock-outline
       input:
+        enable_nightly_closing:
+          name: Enable nightly closing
+          description: >-
+            On = the blinds close at night. Off = the automation does nothing at night
+            and leaves the blinds where they are; daytime control continues in the morning.
+          default: true
+          selector:
+            boolean: {}
         open_time:
           name: Open no earlier than
           default: "06:30:00"
@@ -303,6 +311,7 @@ variables:
   hot_day_max: !input hot_day_max
   hot_day_indoor: !input hot_day_indoor
   hot_day_until_noon: !input hot_day_until_noon
+  enable_nightly_closing: !input enable_nightly_closing
   open_time: !input open_time
   open_lux: !input open_lux
   close_lux: !input close_lux
@@ -427,13 +436,17 @@ actions:
             {{ bright and in_window and elev > 0
                and (t_in > target
                     or (shading_now and t_in >= target - hysteresis | float)) }}
+          night_hold: "{{ night and not enable_nightly_closing }}"
           desired: >-
-            {%- if night -%}closed
+            {%- if night_hold -%}{{ current }}
+            {%- elif night -%}closed
             {%- elif hot_shade or sun_shade -%}{{ 'scene1' if elev < elevation_split | float else 'scene2' }}
             {%- else -%}open{%- endif -%}
           reason: >-
-            {% if night %}
-              {{ 'Night (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx)' }}
+            {% if night_hold %}
+              {{ 'Night, nightly closing disabled (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx)' }}
+            {% elif night %}
+              {{ 'Night (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx, clsnight ' ~ enable_nightly_closing ~ ')' }}
             {% elif hot_shade %}
               {{ 'Hot day (forecast ' ~ fc_days.today_max ~ ' °C, ' ~ fc_days.today_cond ~ ', indoor ' ~ t_in ~ ' °C)' }}
             {% elif sun_shade %}

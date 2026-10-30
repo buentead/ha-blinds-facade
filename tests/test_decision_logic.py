@@ -139,8 +139,14 @@ def decide(*, time, elev, azi, rising, lux, t_in, t_out, bright, current,
     for step in BP["actions"][0]["default"]:
         for key, value in step.get("variables", {}).items():
             ctx[key] = _native(env.from_string(str(value)).render(**ctx))
+    global _last_ctx
+    _last_ctx = ctx
     return ctx["desired"], ctx["target"], ctx["reason"]
 
+def would_act(**kwargs):
+    """Return (desired, night_hold) from a single evaluation."""
+    desired, _, _ = decide(**kwargs)
+    return desired, _last_ctx["night_hold"]
 
 CASES = [
     ("night before dawn", dict(time="05:50", elev=-12, azi=90, rising=True, lux=0, t_in=20, t_out=5, bright="off", current="closed"), "closed"),
@@ -168,6 +174,32 @@ CASES = [
 def test_decision(name, kwargs, expected):
     desired, target, reason = decide(**kwargs)
     assert desired == expected, f"{name}: got {desired} ({reason})"
+
+
+NIGHT = dict(time="22:00", elev=-20, azi=300, rising=False, lux=0, t_in=21, t_out=5, bright="off")
+
+
+def test_nightly_closing_enabled_by_default_closes():
+    desired, hold = would_act(**NIGHT, current="open")
+    assert (desired, hold) == ("closed", False)
+
+
+def test_nightly_closing_disabled_holds_current_state():
+    for current in ("open", "scene1", "closed"):
+        desired, hold = would_act(**NIGHT, current=current, enable_nightly_closing=False)
+        assert hold is True
+        assert desired == current
+
+
+def test_nightly_closing_disabled_does_not_affect_day():
+    day = dict(time="12:30", elev=25, azi=180, rising=True, lux=70000, t_in=22, t_out=5, bright="on", current="open")
+    desired, hold = would_act(**day, enable_nightly_closing=False)
+    assert (desired, hold) == ("scene1", False)
+
+
+def test_nightly_closing_disabled_morning_before_dawn_holds():
+    early = dict(time="05:50", elev=-12, azi=90, rising=True, lux=0, t_in=20, t_out=5, bright="off", current="open")
+    assert would_act(**early, enable_nightly_closing=False) == ("open", True)
 
 
 def test_warm_target_only_when_cold_and_bad_tomorrow():
