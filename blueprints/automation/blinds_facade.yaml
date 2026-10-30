@@ -6,25 +6,17 @@ blueprint:
     On every relevant event the target state is recomputed; the blinds only
     move when it differs from the last state that was set.
 
-
     **Priorities (first match wins):**
 
     1. Area disabled → do nothing
-
     2. Manual override (timer running) → do nothing
-
     3. Night → closed
-
     4. Hot day (forecast hot + sunny, indoor ≥ threshold) → shading
-
     5. Shading (bright, sun within azimuth window, indoor > target) → shading
-
     6. Otherwise → open
-
 
     Shading = scene 1 below the elevation split, scene 2 at or above it.
     Every decision is written to the logbook of the state helper, including the reason.
-
 
     Required per instance: an `input_select` (options exactly: open, closed, scene1, scene2),
     an `input_datetime` (date + time) and a `timer` (restore: true).
@@ -233,7 +225,7 @@ blueprint:
           selector:
             number: {min: 1, max: 720, step: 1, unit_of_measurement: min, mode: box}
         settle_seconds:
-          name: Travel time window
+          name: Blinds travel time window
           description: >-
             Position changes up to this long after an own command are not treated as
             manual operation. Set slightly longer than the longest run including slats.
@@ -242,8 +234,8 @@ blueprint:
             number: {min: 10, max: 600, step: 5, unit_of_measurement: s, mode: box}
 
 mode: queued
-max: 10
-max_exceeded: silent
+max: 25
+max_exceeded: warning
 
 triggers:
   - trigger: time_pattern
