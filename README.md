@@ -19,6 +19,7 @@ Priorities – the first matching rule wins:
 
 | # | Rule | Result |
 |---|------|--------|
+| 0 | Wind lock timer is running | nothing (the wind alarm keeps the blinds open) |
 | 1 | Area enable is off | nothing |
 | 2 | Manual override timer is running | nothing |
 | 3 | Night | `closed` if *Enable nightly closing* is on, otherwise nothing |
@@ -51,6 +52,26 @@ When the timer finishes, the current target state is applied again.
 
 All thresholds are blueprint inputs.
 
+## Wind alarm
+
+A second blueprint, **Blinds Wind Alarm** (`blueprints/automation/blinds_wind_alarm.yaml`),
+protects the blinds independently of the facades:
+
+- When the KNX wind alarm entity reports the alarm, it starts the wind lock timer.
+  It ignores area enables and manual override.
+- The blinds list is **optional**. Leave it empty if KNX moves the blinds on a wind
+  alarm itself – recommended, because that also works when Home Assistant is down.
+  Then the lock only keeps the facade automations passive. If you select blinds, 
+  Home Assistant opens them as well.
+- The lock lasts for the hold time (default 2 hours). Every new alarm restarts the
+  timer (and re-sends the open command if blinds are selected).
+- If the alarm is still active when the timer runs out, or after a Home Assistant
+  restart, the lock is extended again.
+- Every Blinds Facade automation that has the timer selected as *Wind lock timer*
+  stays passive while it runs and does not treat the wind movement as manual
+  operation. When the lock ends, the facade applies its current target state
+  (after 5 s, so an extension by the wind automation wins).
+
 Every movement is written to the logbook of the state helper with its reason, e.g.
 `open → scene1: Shading (indoor 22.0 °C, target 21.5 °C, sun 25.0°/180°)`.
 
@@ -80,12 +101,14 @@ Every movement is written to the logbook of the state helper with its reason, e.
    - off after < 40k lx for 30 min
 4. Restart Home Assistant.
 
-### 2. Blueprint
+### 2. Blueprints
 
-Either copy `blueprints/automation/blinds_facade.yaml` to
-`/config/blueprints/automation/`, or import it from your Git hosting via
-*Settings → Automations & scenes → Blueprints → Import blueprint* using the URL of
-that file.
+Either copy `blueprints/automation/blinds_facade.yaml` (and
+`blinds_wind_alarm.yaml` if you use the wind alarm) to
+`/config/blueprints/automation/`, or import them via
+*Settings → Automations & scenes → Blueprints → Import blueprint* using the **raw**
+URL of each file (`https://raw.githubusercontent.com/<user>/<repo>/main/blueprints/automation/...`).
+A normal GitHub page URL returns HTML and fails with a YAML error.
 
 ### 3. Helpers per room facade
 
@@ -104,7 +127,14 @@ You also need an enable entity per area (`input_boolean`, `switch` or
 ### 4. Automation per room facade
 
 Create an automation from the blueprint and select the blinds, their scenes, the
-helpers, the sensors and the facade's azimuth window.
+helpers, the sensors and the facade's azimuth window. Select
+`timer.blinds_wind_lock` as *Wind lock timer* if you use the wind alarm.
+
+### 5. Wind alarm (once, optional)
+
+Create one automation from **Blinds Wind Alarm**. Select the KNX wind alarm entity
+and `timer.blinds_wind_lock` (from the package). Select blinds only if Home Assistant
+should open them; leave the list empty if KNX handles the wind alarm.
 
 ## Tests
 

@@ -6,17 +6,28 @@ blueprint:
     On every relevant event the target state is recomputed; the blinds only
     move when it differs from the last state that was set.
 
+
     **Priorities (first match wins):**
 
+    0. Wind lock (wind alarm timer running) → do nothing; the Blinds Wind Alarm
+       automation keeps the blinds open
+
     1. Area disabled → do nothing
+
     2. Manual override (timer running) → do nothing
+
     3. Night → closed (only if nightly closing is enabled, otherwise do nothing)
+
     4. Hot day (forecast hot + sunny, indoor ≥ threshold) → shading
+
     5. Shading (bright, sun within azimuth window, indoor > target) → shading
+
     6. Otherwise → open
+
 
     Shading = scene 1 below the elevation split, scene 2 at or above it.
     Every decision is written to the logbook of the state helper, including the reason.
+
 
     Required per instance: an `input_select` (options exactly: open, closed, scene1, scene2),
     an `input_datetime` (date + time) and a `timer` (restore: true).
@@ -69,6 +80,17 @@ blueprint:
         manual_timer:
           name: Manual override timer
           description: Timer with "restore state on restart" enabled.
+          selector:
+            entity:
+              domain: timer
+        wind_lock_timer:
+          name: Wind lock timer (optional)
+          description: >-
+            The timer of the Blinds Wind Alarm automation. While it is running this
+            automation does nothing and ignores position changes; when it finishes
+            the current target state is applied again. Leave empty if you have no
+            wind alarm.
+          default: ""
           selector:
             entity:
               domain: timer
@@ -278,6 +300,11 @@ triggers:
     event_data:
       entity_id: !input manual_timer
     id: force
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input wind_lock_timer
+    id: wind_end
   - trigger: state
     entity_id: !input covers
     attribute: current_position
@@ -295,6 +322,8 @@ variables:
   state_helper: !input state_helper
   last_cmd_helper: !input last_cmd_helper
   manual_timer: !input manual_timer
+  wind_lock_timer: !input wind_lock_timer
+  has_wind_lock: "{{ wind_lock_timer | default('', true) | string | length > 0 }}"
   indoor_temp: !input indoor_temp
   outdoor_temp: !input outdoor_temp
   lux_sensor: !input lux_sensor
@@ -336,6 +365,7 @@ actions:
                  and trigger.from_state.state not in ['unavailable', 'unknown']
                  and trigger.to_state.state not in ['unavailable', 'unknown']
                  and trigger.from_state.attributes.get(trigger.attribute) is not none
+                 and not (has_wind_lock and is_state(wind_lock_timer, 'active'))
                  and (as_timestamp(now()) - last_cmd_ts) > settle_seconds | float(120) }}
           - action: timer.start
             target:
@@ -356,6 +386,15 @@ actions:
     # Compute the target state and move if required
     # -----------------------------------------------------------------
     default:
+      # When the wind lock ends, give the Blinds Wind Alarm automation a moment
+      # to restart the timer if the alarm is still active.
+      - if:
+          - condition: trigger
+            id: wind_end
+        then:
+          - delay: "00:00:05"
+      - condition: template
+        value_template: "{{ not (has_wind_lock and is_state(wind_lock_timer, 'active')) }}"
       - condition: template
         value_template: "{{ is_state(enable_entity, 'on') }}"
       - condition: template
@@ -446,7 +485,7 @@ actions:
             {% if night_hold %}
               {{ 'Night, nightly closing disabled (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx)' }}
             {% elif night %}
-              {{ 'Night (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx, clsnight ' ~ enable_nightly_closing ~ ')' }}
+              {{ 'Night (sun ' ~ elev | round(1) ~ '°, ' ~ lux | int ~ ' lx)' }}
             {% elif hot_shade %}
               {{ 'Hot day (forecast ' ~ fc_days.today_max ~ ' °C, ' ~ fc_days.today_cond ~ ', indoor ' ~ t_in ~ ' °C)' }}
             {% elif sun_shade %}
@@ -456,7 +495,8 @@ actions:
             {% endif %}
 
       - condition: template
-        value_template: "{{ desired != current or trigger.id == 'force' }}"
+        value_template: >-
+          {{ not night_hold and (desired != current or trigger.id in ['force', 'wind_end']) }}
 
       # Stamp the time first so the KNX feedback of our own movement
       # is not detected as manual operation.

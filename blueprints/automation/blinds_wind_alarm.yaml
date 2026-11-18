@@ -1,0 +1,121 @@
+blueprint:
+  name: Blinds Wind Alarm
+  author: Adrian Bünter
+  description: >-
+    Starts the wind lock when the wind alarm is reported and keeps it for a
+    configurable time (default 2 hours). Every new wind alarm restarts the time.
+    If the alarm is still active when the time runs out, the time is restarted
+    as well.
+
+
+    Optionally it also opens the selected blinds. Leave the blinds list empty if
+    KNX already moves the blinds on a wind alarm (recommended, since it also works
+    when Home Assistant is down): the lock then only keeps the facade automations
+    passive.
+
+
+    This automation is independent of the Blinds Facade automations: it ignores
+    area enables and manual override. Select its timer as *Wind lock timer* in every
+    Blinds Facade automation so they stay passive while the lock is active and
+    re-apply their target state once it ends.
+
+
+    Required: a `timer` (restore: true), e.g. `timer.blinds_wind_lock`.
+  domain: automation
+  input:
+    wind_sensor:
+      name: Wind alarm
+      description: KNX entity that reports the wind alarm.
+      selector:
+        entity:
+          domain:
+            - binary_sensor
+            - input_boolean
+            - switch
+    alarm_state:
+      name: Alarm state
+      description: State of the wind alarm entity that means "alarm".
+      default: "on"
+      selector:
+        text: {}
+    covers:
+      name: Blinds (optional)
+      description: >-
+        Blinds that Home Assistant opens on a wind alarm. Leave empty if KNX
+        handles the wind alarm itself.
+      default: []
+      selector:
+        entity:
+          domain: cover
+          multiple: true
+    wind_timer:
+      name: Wind lock timer
+      description: Timer with "restore state on restart" enabled.
+      selector:
+        entity:
+          domain: timer
+    hold_minutes:
+      name: Hold time
+      description: How long the blinds stay open after the last wind alarm.
+      default: 120
+      selector:
+        number: {min: 1, max: 1440, step: 1, unit_of_measurement: min, mode: box}
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input wind_sensor
+    to: !input alarm_state
+    id: alarm
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input wind_timer
+    id: expired
+  - trigger: homeassistant
+    event: start
+    id: start
+
+variables:
+  wind_sensor: !input wind_sensor
+  alarm_state: !input alarm_state
+  covers: !input covers
+  wind_timer: !input wind_timer
+  hold_minutes: !input hold_minutes
+  alarm_active: "{{ is_state(wind_sensor, alarm_state) }}"
+  hold_duration: >-
+    {% set m = hold_minutes | int(120) %}
+    {{ '%02d:%02d:00' % (m // 60, m % 60) }}
+
+actions:
+  # A new alarm always counts. After the hold time or a restart only an alarm
+  # that is still active keeps the lock.
+  - condition: template
+    value_template: "{{ trigger.id == 'alarm' or alarm_active }}"
+
+  # Start the lock BEFORE moving, so the facade automations already see it
+  # when the position feedback of this movement arrives.
+  - action: timer.start
+    target:
+      entity_id: !input wind_timer
+    data:
+      duration: "{{ hold_duration }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ covers | count > 0 }}"
+    then:
+      - action: cover.open_cover
+        target:
+          entity_id: "{{ covers }}"
+
+  - action: logbook.log
+    data:
+      name: Blinds
+      entity_id: !input wind_timer
+      message: >-
+        {% if trigger.id == 'alarm' %}Wind alarm{% elif trigger.id == 'expired' %}Wind alarm still active{% else %}Wind alarm active after restart{% endif %}
+        – {% if covers | count > 0 %}{{ covers | count }} blinds opened{% else %}blinds left to KNX{% endif %}, lock for {{ hold_minutes | int(120) }} min.
