@@ -51,6 +51,13 @@ timer:
     duration: "01:00:00"
     restore: true
 
+  # Wind lock – needed once for the Blinds Wind Alarm automation.
+  # Select it as "Wind lock timer" in every Blinds Facade automation.
+  blinds_wind_lock:
+    name: "Blinds wind lock"
+    duration: "02:00:00"
+    restore: true
+
 # Enable switch per area (if you don't have one yet)
 input_boolean:
   blinds_enable_example_area:
